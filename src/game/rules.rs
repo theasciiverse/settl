@@ -1140,6 +1140,9 @@ pub fn apply_discard(
 pub fn check_victory(state: &GameState) -> Option<PlayerId> {
     let current = match &state.phase {
         GamePhase::Playing { current_player, .. } => *current_player,
+        // Applying the winning build already set GameOver (check_victory_inline);
+        // report that winner instead of missing the win.
+        GamePhase::GameOver { winner } => return Some(*winner),
         _ => return None,
     };
     if state.victory_points(current) >= VP_TO_WIN {
@@ -1162,6 +1165,13 @@ fn check_victory_inline(state: &mut GameState) {
 mod tests {
     use super::*;
     use crate::game::board::{Board, EdgeDirection, VertexDirection};
+
+    #[test]
+    fn a_win_set_by_a_build_is_reported() {
+        let mut state = GameState::new(Board::default_board(), 3);
+        state.phase = GamePhase::GameOver { winner: 2 };
+        assert_eq!(check_victory(&state), Some(2));
+    }
 
     fn make_state(num_players: usize) -> GameState {
         GameState::new(Board::default_board(), num_players)
