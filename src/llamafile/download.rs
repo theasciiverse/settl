@@ -58,13 +58,10 @@ pub fn estimate_ram_gb_from_file_size(file_size_bytes: u64) -> u32 {
 /// Minimum file size to consider a cached llamafile valid (100 MB).
 const MIN_VALID_SIZE: u64 = 100 * 1024 * 1024;
 
-/// Return the directory where llamafiles are stored: `~/.settl/llamafiles/`.
+/// Return the directory where llamafiles are stored: `llamafiles/` in the
+/// cache folder (`crate::paths`).
 pub fn llamafile_dir() -> PathBuf {
-    let home = std::env::var("HOME")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| ".".into());
-    PathBuf::from(home).join(".settl").join("llamafiles")
+    crate::paths::cache_dir().join("llamafiles")
 }
 
 /// Return the expected path to a llamafile model.
@@ -204,10 +201,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn llamafile_dir_uses_home() {
-        std::env::set_var("HOME", "/tmp/test_home");
+    fn llamafile_dir_is_in_the_cache_folder() {
         let dir = llamafile_dir();
-        assert_eq!(dir, PathBuf::from("/tmp/test_home/.settl/llamafiles"));
+        assert!(dir.starts_with(crate::paths::cache_dir()));
+        assert!(dir.ends_with("llamafiles"));
     }
 
     #[test]

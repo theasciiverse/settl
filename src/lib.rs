@@ -5,6 +5,7 @@ pub mod headless;
 pub mod hooks;
 pub mod llamafile;
 pub mod logging;
+pub mod paths;
 pub mod player;
 pub mod system_info;
 pub mod trading;

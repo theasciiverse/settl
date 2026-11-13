@@ -41,6 +41,11 @@ struct UpdateCache {
 /// Any errors (network, parse, filesystem) are silently swallowed -- this
 /// feature must never block or crash the app.
 pub async fn check_for_update() -> Option<UpdateInfo> {
+    // Asciiverse: av installs and updates settl, and upstream is archived,
+    // so the check is off unless SETTL_UPDATE_CHECK=1 asks for it.
+    if std::env::var("SETTL_UPDATE_CHECK").as_deref() != Ok("1") {
+        return None;
+    }
     let current = env!("CARGO_PKG_VERSION");
     let cache_path = cache_path();
 
@@ -130,11 +135,7 @@ fn is_newer(candidate: &str, current: &str) -> bool {
 // ── Cache I/O ─────────────────────────────────────────────────────────
 
 fn cache_path() -> PathBuf {
-    let home = std::env::var("HOME")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| ".".into());
-    PathBuf::from(home).join(".settl").join("update_cache.json")
+    crate::paths::state_dir().join("update_cache.json")
 }
 
 fn read_cache(path: &PathBuf) -> Option<UpdateCache> {

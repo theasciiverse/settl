@@ -1,6 +1,6 @@
 //! Application configuration: model registry and persistence.
 //!
-//! The config file lives at `~/.settl/config.toml` and stores a list of
+//! The config file lives at `config.toml` in the state folder (`crate::paths`) and stores a list of
 //! AI model entries (llamafiles and API endpoints) that the user can manage
 //! from the Settings screen.
 
@@ -25,7 +25,7 @@ pub enum ModelBackend {
     Llamafile {
         /// Download URL for the .llamafile binary.
         url: String,
-        /// Filename on disk (inside `~/.settl/llamafiles/`).
+        /// Filename on disk (inside the cache folder's `llamafiles/`).
         filename: String,
     },
     /// A remote API endpoint (Anthropic Messages API compatible).
@@ -158,13 +158,9 @@ impl Config {
     }
 }
 
-/// Return the path to `~/.settl/config.toml`.
+/// Return the path to `config.toml` in the state folder.
 pub fn config_path() -> PathBuf {
-    let home = std::env::var("HOME")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| ".".into());
-    PathBuf::from(home).join(".settl").join("config.toml")
+    crate::paths::state_dir().join("config.toml")
 }
 
 /// Load config from disk, falling back to defaults if missing or malformed.

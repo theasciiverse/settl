@@ -1,7 +1,7 @@
 //! File-based debug logger.
 //!
-//! Writes to `~/.settl/debug.log`. Automatically enabled in debug builds;
-//! in release builds, set `SETTL_DEBUG=1` to enable. Uses the `log` crate
+//! Writes `debug.log` to the state folder (`crate::paths`). Automatically enabled in debug builds;
+//! in release builds, set `SETTL_DEBUG=1` or `RUST_LOG` to enable. Uses the `log` crate
 //! facade so any module can call `log::debug!()`, `log::info!()`, etc.
 
 use std::fs::OpenOptions;
@@ -57,7 +57,8 @@ pub fn init() {
     let enabled = match env_override.as_deref() {
         Some("0" | "false") => false,
         Some("1" | "true") => true,
-        _ => cfg!(debug_assertions),
+        // The Asciiverse convention: RUST_LOG=debug turns session logging on.
+        _ => cfg!(debug_assertions) || std::env::var_os("RUST_LOG").is_some(),
     };
 
     if enabled {
@@ -85,8 +86,7 @@ pub fn init() {
 }
 
 fn log_path() -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok().filter(|s| !s.is_empty())?;
-    let dir = PathBuf::from(home).join(".settl");
+    let dir = crate::paths::state_dir();
     let _ = std::fs::create_dir_all(&dir);
     Some(dir.join("debug.log"))
 }
