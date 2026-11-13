@@ -1,4 +1,5 @@
 pub mod anthropic_client;
+pub mod computer;
 pub mod human;
 pub mod llm_player;
 pub mod personality;

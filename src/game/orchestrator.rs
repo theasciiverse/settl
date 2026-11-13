@@ -252,7 +252,11 @@ impl GameOrchestrator {
                     player: winner,
                     final_vp: vp,
                 });
-                crate::game::save::delete_autosave();
+                // A game without saves (watch-only) must not delete the
+                // player's own autosave.
+                if !self.player_configs.is_empty() {
+                    crate::game::save::delete_autosave();
+                }
                 if let Some(tx) = &self.ui_tx {
                     let _ = tx.send(UiEvent::GameOver {
                         winner,

@@ -583,7 +583,9 @@ pub struct App {
 // ── Main Entry Point ───────────────────────────────────────────────────
 
 /// Run the full TUI application (title → menu → game → post-game loop).
-pub async fn run_app() -> io::Result<()> {
+/// Run the TUI. With `demo`, four computer players play a game on their
+/// own, for watching (and the catalog preview).
+pub async fn run_app(demo: bool) -> io::Result<()> {
     let personalities = discover_personalities();
 
     enable_raw_mode()?;
@@ -627,11 +629,23 @@ pub async fn run_app() -> io::Result<()> {
         let _ = update_tx.send(result);
     });
 
+    let screen = if demo {
+        let mut ng = NewGameState::new(&personalities, &config);
+        ng.four_players = true;
+        for pc in &mut ng.players {
+            pc.kind = PlayerKind::Computer;
+        }
+        ng.players[0].name = "Ada".into();
+        launch_game(&ng, &personalities, &config, None, None)
+    } else {
+        Screen::MainMenu(MainMenuState::new())
+    };
+
     let mut app = App {
-        screen: Screen::MainMenu(MainMenuState::new()),
+        screen,
         personalities,
         llamafile_process: None,
-        show_size_warning,
+        show_size_warning: show_size_warning && !demo,
         config,
         update_info: None,
         update_rx: Some(update_rx),
@@ -647,12 +661,46 @@ pub async fn run_app() -> io::Result<()> {
     result
 }
 
+/// A one-line picture of where the app is, logged once a second.
+fn log_snapshot(screen: &Screen) {
+    let name = match screen {
+        Screen::MainMenu(_) => "main menu",
+        Screen::NewGame(_) => "new game",
+        Screen::About(_) => "about",
+        Screen::Docs(_) => "docs",
+        Screen::Settings(_) => "settings",
+        Screen::Personalities(_) => "personalities",
+        Screen::LlamafileSetup(_) => "model setup",
+        Screen::Playing(_) => "playing",
+        Screen::PostGame(_) => "post game",
+    };
+    if let Screen::Playing(ps) = screen {
+        if let Some(state) = &ps.state {
+            let vp: Vec<u8> = (0..state.num_players)
+                .map(|p| state.victory_points(p))
+                .collect();
+            log::debug!(
+                "snapshot screen={name} turn={} phase={:?} vp={vp:?}",
+                state.turn_number,
+                state.phase,
+            );
+            return;
+        }
+    }
+    log::debug!("snapshot screen={name}");
+}
+
 /// The main event loop — dispatches draw and input per screen.
 async fn run_event_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
 ) -> io::Result<()> {
+    let mut last_snapshot = std::time::Instant::now();
     loop {
+        if last_snapshot.elapsed() >= Duration::from_secs(1) {
+            last_snapshot = std::time::Instant::now();
+            log_snapshot(&app.screen);
+        }
         // Draw.
         terminal.draw(|f| {
             draw_screen(f, &app.screen, app.update_info.as_ref());
@@ -675,6 +723,7 @@ async fn run_event_loop(
         if event::poll(timeout)? {
             loop {
                 let raw_event = event::read()?;
+                log::debug!("input {:?}", raw_event);
 
                 // Handle mouse scroll events for the playing screen.
                 if let Event::Mouse(mouse) = &raw_event {
@@ -702,8 +751,12 @@ async fn run_event_loop(
                                         model_entry.map(|e| &e.backend),
                                         Some(crate::config::ModelBackend::Api { .. })
                                     );
-                                    if is_api {
-                                        // API models don't need llamafile -- launch directly.
+                                    let needs_model = ng.players[..ng.num_players()]
+                                        .iter()
+                                        .any(|p| p.kind == PlayerKind::Llamafile);
+                                    if is_api || !needs_model {
+                                        // API models and Computer players don't need
+                                        // llamafile -- launch directly.
                                         let screen = launch_game(
                                             ng,
                                             &app.personalities,
@@ -765,7 +818,11 @@ async fn run_event_loop(
                                         model_entry.map(|e| &e.backend),
                                         Some(crate::config::ModelBackend::Api { .. })
                                     );
-                                    if is_api {
+                                    let needs_model = save
+                                        .player_configs
+                                        .iter()
+                                        .any(|p| !p.is_human && !p.computer);
+                                    if is_api || !needs_model {
                                         let screen = resume_game(
                                             save,
                                             &app.personalities,
@@ -1720,14 +1777,30 @@ fn cycle_new_game_value(state: &mut NewGameState, forward: bool) {
             state.four_players = !state.four_players;
         }
         NewGameFocus::Player { row } => {
+            // An AI seat cycles through the personalities, then the
+            // rule-based Computer, then back round.
             let player = &mut state.players[row];
-            if player.kind == PlayerKind::Llamafile {
-                let n = state.personality_names.len();
-                player.personality_index = if forward {
-                    (player.personality_index + 1) % n
-                } else {
-                    player.personality_index.checked_sub(1).unwrap_or(n - 1)
-                };
+            let n = state.personality_names.len();
+            match player.kind {
+                PlayerKind::Human => {}
+                PlayerKind::Computer => {
+                    player.kind = PlayerKind::Llamafile;
+                    player.personality_index = if forward { 0 } else { n - 1 };
+                }
+                PlayerKind::Llamafile => {
+                    let at_end = if forward {
+                        player.personality_index + 1 == n
+                    } else {
+                        player.personality_index == 0
+                    };
+                    if at_end {
+                        player.kind = PlayerKind::Computer;
+                    } else if forward {
+                        player.personality_index += 1;
+                    } else {
+                        player.personality_index -= 1;
+                    }
+                }
             }
         }
         NewGameFocus::FriendlyRobber => {
@@ -1877,16 +1950,26 @@ fn launch_game(
                 players.push(Box::new(TuiHumanPlayer::new(pc.name.clone(), channel))
                     as Box<dyn player::Player>);
             }
+            PlayerKind::Computer => {
+                players.push(
+                    Box::new(player::computer::ComputerPlayer::new(pc.name.clone()))
+                        as Box<dyn player::Player>,
+                );
+            }
         }
     }
 
     let player_names: Vec<String> = active_players.iter().map(|p| p.name.clone()).collect();
 
+    // A game with no human at the table is for watching: it is not saved,
+    // so it never replaces the player's own autosave.
     let save_configs: Vec<crate::game::save::SavedPlayerConfig> = active_players
         .iter()
+        .filter(|_| has_human)
         .map(|pc| crate::game::save::SavedPlayerConfig {
             name: pc.name.clone(),
             is_human: pc.kind == PlayerKind::Human,
+            computer: pc.kind == PlayerKind::Computer,
             personality_index: pc.personality_index,
         })
         .collect();
@@ -1974,6 +2057,11 @@ fn resume_game(
             players
                 .push(Box::new(TuiHumanPlayer::new(pc.name.clone(), channel))
                     as Box<dyn player::Player>);
+        } else if pc.computer {
+            players.push(
+                Box::new(player::computer::ComputerPlayer::new(pc.name.clone()))
+                    as Box<dyn player::Player>,
+            );
         } else {
             let personality = if pc.personality_index < built_in_personalities.len() {
                 built_in_personalities[pc.personality_index].clone()

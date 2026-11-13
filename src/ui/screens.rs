@@ -67,6 +67,8 @@ impl MainMenuState {
 pub enum PlayerKind {
     Llamafile,
     Human,
+    /// Rule-based opponent: instant, no model download.
+    Computer,
 }
 
 impl PlayerKind {
@@ -74,6 +76,7 @@ impl PlayerKind {
         match self {
             PlayerKind::Llamafile => "Llamafile",
             PlayerKind::Human => "Human",
+            PlayerKind::Computer => "Computer",
         }
     }
 }
@@ -1149,7 +1152,7 @@ pub fn draw_new_game(f: &mut Frame, state: &NewGameState) {
         let row_y = first_row_y + i as u16;
         let row_area = Rect::new(x_start, row_y, content_width, 1);
 
-        let is_human = player.kind == PlayerKind::Human;
+        let is_human = player.kind != PlayerKind::Llamafile;
         let is_dimmed = !state.four_players && i == 3;
         let is_focused = matches!(state.focus, NewGameFocus::Player { row } if row == i);
 

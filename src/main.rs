@@ -15,7 +15,8 @@ async fn main() {
         let cli = HeadlessCli::parse();
         headless::run(cli).await;
     } else {
-        if let Err(e) = ui::run_app().await {
+        let demo = args.iter().any(|a| a == "--demo");
+        if let Err(e) = ui::run_app(demo).await {
             eprintln!("TUI error: {}", e);
         }
     }

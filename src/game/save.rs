@@ -1,6 +1,6 @@
 //! Auto-save and resume support.
 //!
-//! Saves game state to `~/.settl/saves/autosave.json` after each turn.
+//! Saves game state to `saves/autosave.json` in the state folder after each turn.
 //! The main menu shows a "Continue" option when a save file exists.
 
 use std::path::PathBuf;
@@ -16,6 +16,9 @@ use crate::llamafile::LlamafileModel;
 pub struct SavedPlayerConfig {
     pub name: String,
     pub is_human: bool,
+    /// A rule-based Computer player (saves from before it existed lack this).
+    #[serde(default)]
+    pub computer: bool,
     pub personality_index: usize,
 }
 
@@ -36,8 +39,7 @@ pub struct SaveFile {
 }
 
 fn save_dir() -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok().filter(|s| !s.is_empty())?;
-    let dir = PathBuf::from(home).join(".settl").join("saves");
+    let dir = crate::paths::state_dir().join("saves");
     let _ = std::fs::create_dir_all(&dir);
     Some(dir)
 }
@@ -94,16 +96,19 @@ mod tests {
                 SavedPlayerConfig {
                     name: "Alice".into(),
                     is_human: true,
+                    computer: false,
                     personality_index: 0,
                 },
                 SavedPlayerConfig {
                     name: "Bob".into(),
                     is_human: false,
+                    computer: false,
                     personality_index: 1,
                 },
                 SavedPlayerConfig {
                     name: "Charlie".into(),
                     is_human: false,
+                    computer: false,
                     personality_index: 2,
                 },
             ],
