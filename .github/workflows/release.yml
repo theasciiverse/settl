@@ -1,141 +1,130 @@
-name: Release
+# Builds settl for the Asciiverse catalog and as system packages.
+#
+# For av: one archive per target, named <id>-<target>.tar.gz, plus a
+# SHA256SUMS file, attached to a GitHub release (hub/catalog/SCHEMA.md,
+# release.source = "github").
+# For everyone else: .deb, .rpm, .apk and Arch packages from the same static
+# Linux binary, made by nfpm (asciiverse/nfpm.yaml).
+#
+# Tags look like v0.1.4+20260408-av.1: upstream's version and the date of
+# the upstream commit built, then our packaging release. Linux builds run in
+# Alpine, so the binaries are static (musl); rustls' aws-lc needs cmake and a
+# C compiler there. Linux and macOS only, like upstream: the llamafile
+# opponents are started as a program, which upstream never did on Windows.
+
+name: release
 
 on:
   push:
-    tags:
-      - 'v*'
+    tags: ["*-av.*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release (e.g., v0.1.0)'
+        description: "existing tag to build and release"
         required: true
 
 env:
-  CARGO_TERM_COLOR: always
+  ID: settl
+  BIN: settl
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+permissions:
+  contents: write
 
 jobs:
-  validate:
-    name: Validate Version
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Validate version matches tag
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ github.event.inputs.tag }}"
-          else
-            TAG="${GITHUB_REF#refs/tags/}"
-          fi
-          TAG_VERSION="${TAG#v}"
-          CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          echo "Tag version: $TAG_VERSION"
-          echo "Cargo.toml version: $CARGO_VERSION"
-          if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
-            echo "::error::Version mismatch! Cargo.toml has $CARGO_VERSION but tag is $TAG"
-            echo "Use the 'Prepare Release' workflow to bump the version automatically."
-            exit 1
-          fi
-          echo "Versions match"
-
-  build:
-    name: Build ${{ matrix.target }}
-    needs: validate
-    runs-on: ${{ matrix.os }}
+  linux:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            name: settl-darwin-amd64
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            name: settl-darwin-arm64
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            name: settl-linux-amd64
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            name: settl-linux-arm64
-
+          - { target: x86_64-unknown-linux-musl, runner: ubuntu-24.04, arch: amd64 }
+          - { target: aarch64-unknown-linux-musl, runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
         with:
-          targets: ${{ matrix.target }}
-
-      - name: Install cross-compilation tools (Linux ARM64)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          ref: ${{ env.TAG }}
 
       - name: Build
         run: |
-          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
-            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
-          fi
-          cargo build --release --target ${{ matrix.target }}
+          docker run --rm -v "$PWD":/src -w /src rust:1-alpine sh -c '
+            apk add --no-cache musl-dev cmake make gcc g++ perl &&
+            cargo build --release --locked &&
+            strip target/release/settl'
+          sudo chown -R "$(id -u):$(id -g)" target
+          file target/release/$BIN
+
+      - name: Package for av
+        run: |
+          # the binary sits at the top of the archive, where av looks for it
+          mkdir -p stage dist
+          cp target/release/$BIN LICENSE README.md PATCHES.md stage/
+          tar -czf "dist/$ID-${{ matrix.target }}.tar.gz" -C stage .
+
+      - name: System packages
+        run: |
+          v="${TAG#v}"; v="${v%%-av.*}"; export VERSION="${v%%+*}" RELEASE="${TAG##*-av.}" ARCH="${{ matrix.arch }}"
+          for p in deb rpm apk archlinux; do
+            docker run --rm -u "$(id -u):$(id -g)" -v "$PWD":/src -w /src \
+              -e VERSION -e RELEASE -e ARCH goreleaser/nfpm:v2.43.0 \
+              package --config asciiverse/nfpm.yaml --packager "$p" --target dist/
+          done
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-apple-darwin, aarch64-apple-darwin]
+    runs-on: macos-15
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Build
+        run: |
+          rustup target add ${{ matrix.target }}
+          cargo build --release --locked --target ${{ matrix.target }}
+          strip target/${{ matrix.target }}/release/$BIN
+          file target/${{ matrix.target }}/release/$BIN
 
       - name: Package
         run: |
-          mkdir -p dist
-          cp target/${{ matrix.target }}/release/settl dist/${{ matrix.name }}
-          cd dist
-          tar -czvf ${{ matrix.name }}.tar.gz ${{ matrix.name }}
-          shasum -a 256 ${{ matrix.name }}.tar.gz > ${{ matrix.name }}.tar.gz.sha256
+          mkdir -p stage dist
+          cp target/${{ matrix.target }}/release/$BIN LICENSE README.md PATCHES.md stage/
+          tar -czf "dist/$ID-${{ matrix.target }}.tar.gz" -C stage .
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.name }}
-          path: |
-            dist/${{ matrix.name }}.tar.gz
-            dist/${{ matrix.name }}.tar.gz.sha256
+          name: ${{ matrix.target }}
+          path: dist/*
 
   release:
-    name: Create Release
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    needs: [linux, macos]
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          path: dist
           merge-multiple: true
 
-      - name: List artifacts
-        run: |
-          echo "=== Artifacts directory ==="
-          ls -laR artifacts/
-          echo "=== Finding tar.gz files ==="
-          find artifacts -type f -name '*.tar.gz*' | head -20
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS && cat SHA256SUMS
 
-      - name: Get version
-        id: version
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          token: ${{ secrets.RELEASE_TOKEN }}
-          tag_name: ${{ steps.version.outputs.version }}
-          name: settl ${{ steps.version.outputs.version }}
-          draft: false
-          prerelease: false
-          files: |
-            artifacts/*.tar.gz
-            artifacts/*.tar.gz.sha256
-          generate_release_notes: true
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "settl $TAG" \
+                 --notes "settl ${TAG%%-av.*} from github.com/mozilla-ai/settl, built for the Asciiverse catalog, with .deb, .rpm, .apk and Arch packages. Changes from upstream: see PATCHES.md."
+          gh release upload "$TAG" dist/* -R "$GITHUB_REPOSITORY" --clobber

@@ -1,3 +1,15 @@
+> **Play it with Asciiverse.** With [av](https://asciiverse.sh), the Asciiverse
+> client:
+>
+> ```
+> av install settl
+> av play settl
+> ```
+>
+> Besides the language model opponents (downloaded on first use), any seat
+> can be the instant rule-based Computer, and `settl --demo` lets four of
+> them play. The original README follows.
+
 <p align="center">
   <h1 align="center">settl</h1>
   <p align="center">

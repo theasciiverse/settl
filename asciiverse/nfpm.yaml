@@ -1,0 +1,37 @@
+# System packages (.deb, .rpm, .apk, Arch) for settl, built by nfpm from the
+# same static binary as the av archive. The release workflow sets VERSION,
+# RELEASE (our packaging release) and ARCH (amd64 or arm64), and leaves the
+# binary at target/release/settl.
+#
+# No .desktop file on purpose: av is the one place titles are started from,
+# so Asciiverse packages never add menu entries (asciiverse/CLAUDE.md).
+name: settl
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+release: ${RELEASE}
+section: games
+priority: optional
+maintainer: Asciiverse <packages@asciiverse.sh>
+vendor: Asciiverse
+homepage: https://github.com/theasciiverse/settl
+license: Apache-2.0
+description: |
+  A terminal hex settlement game against local language models.
+  Settle a hex island, trade and build against three opponents: small
+  language models running on your own machine (downloaded on first use,
+  no account or key), or an instant rule-based computer. By Mozilla.ai,
+  packaged by Asciiverse.
+contents:
+  - src: target/release/settl
+    dst: /usr/bin/settl
+    file_info: { mode: 0755 }
+  - src: LICENSE
+    dst: /usr/share/doc/settl/copyright
+    file_info: { mode: 0644 }
+  - src: README.md
+    dst: /usr/share/doc/settl/README.md
+    file_info: { mode: 0644 }
+  - src: PATCHES.md
+    dst: /usr/share/doc/settl/PATCHES.md
+    file_info: { mode: 0644 }
